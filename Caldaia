@@ -1,6 +1,8 @@
 #include <Wire.h>
 #include <RTClib.h>
 #include <LiquidCrystal_I2C.h>
+#include <avr/pgmspace.h>
+#include <OLED_I2C.h>
   
 #define CONTATTO_PAVIMENTO 2
 #define CONTATTO_RADIATORI 3
@@ -26,13 +28,22 @@ static unsigned char val3 = LOW;
 static unsigned char lastval3 = LOW;
 static unsigned long PompaON = 0;
 
-int ore[]={23,02,23,50};
+int ore[]={16,51,16,55};
 bool pulsante_running = false;
 unsigned long timer_massimo = 0; // dummy initialization
 
 RTC_DS1307 RTC;
 LiquidCrystal_I2C lcd(0x27, 20, 4);
-  
+
+
+
+char stringa[20];
+
+const char giorni[7][10] = {
+  {"Lunedi"}, { "Martedi"}, {"Mercoledi"}, {"Giovedi"}, {"Venerdi"},{"Sabato"},{"Domenica"},
+};
+
+
 void setup() {  
   pinMode(RELE_PAVIMENTO, OUTPUT);
   pinMode(RELE_RADIATORI, OUTPUT);
@@ -53,7 +64,7 @@ void setup() {
   Wire.begin();
   RTC.begin();
   lcd.begin();
-
+    
   if (! RTC.isrunning()) {
     Serial.println("RTC is NOT running!");
     RTC.adjust(DateTime(__DATE__, __TIME__));
@@ -61,12 +72,14 @@ void setup() {
 }
   
 void loop() {
-
+  
+  DateTime now = RTC.now(); // acquisce dati dal RTC
+    
   if ( digitalRead(SET) == LOW) { 
     time = millis(); 
   }
   
-  DateTime now = RTC.now();
+  //DateTime now = RTC.now();
   lcd.clear();
   sprintf(buffer,  "%02d/%02d/%d", now.day(), now.month(), now.year());
   lcd.setCursor(3,0);
@@ -75,14 +88,14 @@ void loop() {
   char buffer[10] = "";
 
   sprintf(buffer,  "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-  lcd.setCursor(0,1);
+  lcd.setCursor(4,1);
   lcd.print( buffer );
     
   if (time > 0 && setModeTime < (millis() - time) ) { 
     setMode( now ); 
   }
 
-  delay(1000);
+  delay(500);
     
   val1 = digitalRead(CONTATTO_PAVIMENTO);
 
@@ -127,7 +140,6 @@ bool dentro_intervallo_temporale(int ora_inizio, int minuti_inizio, int ora_fine
   int minuti_attuali = momento_attuale.minute();
   if (ora_inizio <= ore_attuali && ora_fine >= ore_attuali) {
     if (minuti_inizio <= minuti_attuali && minuti_fine >= minuti_attuali) {
-      Serial.println("intervallo corretto");
       return true;
     }
   }
