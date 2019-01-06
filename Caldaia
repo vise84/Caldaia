@@ -1,0 +1,268 @@
+#include <Wire.h>
+#include <RTClib.h>
+#include <LiquidCrystal_I2C.h>
+  
+#define CONTATTO_PAVIMENTO 2
+#define CONTATTO_RADIATORI 3
+#define CONTATTO_POMPA_RICIRCOLO 4
+#define RELE_PAVIMENTO 5                 
+#define RELE_RADIATORI 6
+#define POMPA_RICIRCOLO 7
+
+
+#define SET 8
+#define PIU 9
+#define MENO 10
+
+char buffer[10];
+unsigned long time=0;
+unsigned long timeSet=0;
+int  setModeTime=2000;
+
+int val1=0;
+int val2=0;
+static unsigned char StatoPompa = LOW;
+static unsigned char val3 = LOW;
+static unsigned char lastval3 = LOW;
+static unsigned long PompaON = 0;
+
+int ore[]={23,02,23,50};
+bool pulsante_running = false;
+unsigned long timer_massimo = 0; // dummy initialization
+
+RTC_DS1307 RTC;
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+  
+void setup() {  
+  pinMode(RELE_PAVIMENTO, OUTPUT);
+  pinMode(RELE_RADIATORI, OUTPUT);
+  pinMode(POMPA_RICIRCOLO, OUTPUT);
+  pinMode(CONTATTO_PAVIMENTO, INPUT);
+  pinMode(CONTATTO_RADIATORI, INPUT);
+  pinMode(CONTATTO_POMPA_RICIRCOLO, INPUT);
+
+  digitalWrite (RELE_PAVIMENTO, HIGH);
+  digitalWrite (RELE_RADIATORI, HIGH);
+  digitalWrite (POMPA_RICIRCOLO, HIGH);
+
+  pinMode (SET, INPUT); // Pulsante SET
+  pinMode(PIU,INPUT); // Pulsante +
+  pinMode (MENO, INPUT); // Pulsante -
+
+  Serial.begin(9600);
+  Wire.begin();
+  RTC.begin();
+  lcd.begin();
+
+  if (! RTC.isrunning()) {
+    Serial.println("RTC is NOT running!");
+    RTC.adjust(DateTime(__DATE__, __TIME__));
+  }
+}
+  
+void loop() {
+
+  if ( digitalRead(SET) == LOW) { 
+    time = millis(); 
+  }
+  
+  DateTime now = RTC.now();
+  lcd.clear();
+  sprintf(buffer,  "%02d/%02d/%d", now.day(), now.month(), now.year());
+  lcd.setCursor(3,0);
+  lcd.print( buffer );
+ 
+  char buffer[10] = "";
+
+  sprintf(buffer,  "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+  lcd.setCursor(0,1);
+  lcd.print( buffer );
+    
+  if (time > 0 && setModeTime < (millis() - time) ) { 
+    setMode( now ); 
+  }
+
+  delay(1000);
+    
+  val1 = digitalRead(CONTATTO_PAVIMENTO);
+
+  if (val1 == HIGH) {  
+    digitalWrite(RELE_PAVIMENTO, LOW); 
+  } else {  
+    digitalWrite(RELE_PAVIMENTO, HIGH);    
+  }  
+  
+  val2 = digitalRead(CONTATTO_RADIATORI); 
+  if (val2 == HIGH) {  
+    digitalWrite(RELE_RADIATORI, LOW);
+  } else {  
+    digitalWrite(RELE_RADIATORI, HIGH);   
+  }   
+
+  start_pompa(ore, now);
+}
+
+void accendi_pompa() {
+  digitalWrite(POMPA_RICIRCOLO,LOW);
+}
+
+void spegni_pompa() {
+  digitalWrite(POMPA_RICIRCOLO,HIGH);
+}
+
+unsigned long calcola_timer_massimo(unsigned long max_time_delta) {
+  return millis() + max_time_delta;
+}
+
+bool pulsante_timer_raggiunto(unsigned long timer_massimo) {
+  if (millis() > timer_massimo) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+bool dentro_intervallo_temporale(int ora_inizio, int minuti_inizio, int ora_fine, int minuti_fine, DateTime momento_attuale) {
+  int ore_attuali = momento_attuale.hour();
+  int minuti_attuali = momento_attuale.minute();
+  if (ora_inizio <= ore_attuali && ora_fine >= ore_attuali) {
+    if (minuti_inizio <= minuti_attuali && minuti_fine >= minuti_attuali) {
+      Serial.println("intervallo corretto");
+      return true;
+    }
+  }
+  return false;
+}
+
+bool pulsante_premuto() {
+  if (digitalRead(CONTATTO_POMPA_RICIRCOLO) == HIGH) {
+    return true;
+  }
+  return false;
+}
+
+
+void start_pompa(int ore[], DateTime momento_attuale) {
+
+  /*
+  IF dentro_intervallo_temporale
+    accendi
+  ELSE
+    IF NOT pulsante_running
+      IF pulsante_premuto
+        accendi
+        inizia_timer
+      ELSE
+        spegni
+    ELSE 
+      IF timer_delta_reached
+        spegni
+  */
+
+  if (dentro_intervallo_temporale(ore[0], ore[1], ore[2], ore[3], momento_attuale)) {
+    accendi_pompa();
+  } else {
+    // Serial.println(pulsante_running);
+    // Serial.println(!pulsante_running);
+    // Serial.println(pulsante_premuto());
+    // Serial.println();
+    if (!pulsante_running) {
+      if (pulsante_premuto()) {
+        accendi_pompa();
+        timer_massimo = calcola_timer_massimo(5000);
+        pulsante_running = true;
+      } else {
+        spegni_pompa();
+      }
+    } else {
+      if (pulsante_timer_raggiunto(timer_massimo)) {
+        spegni_pompa();
+        pulsante_running = false;
+      }
+    }
+  }
+}
+
+
+void setMode( DateTime now ) {
+  boolean setMode = true;
+  int setModeLevel = 0;
+
+  int _day = now.day();
+  int _month = now.month();
+  int _year = now.year();
+  int _hour = now.hour();
+  int _min = now.minute();
+  int _sec = now.second();
+
+  lcd.clear();
+  lcd.setCursor(0,0);
+  sprintf(buffer,  "%s: %02d", "Giorno", _day);
+  delay( 1000 );
+  timeSet = millis();
+
+  while ( setMode ) {
+    if ( digitalRead(SET) == HIGH|| digitalRead(PIU) == HIGH || digitalRead(MENO) == HIGH ) { 
+      timeSet = millis(); 
+    }
+
+    lcd.setCursor(0,0);
+
+    // Set Day 
+    if ( setModeLevel == 0 ) {
+      if ( digitalRead(PIU) == HIGH && _day < 31) { _day++; }
+      if ( digitalRead(MENO) == HIGH && _day > 1) { _day--; }
+
+      sprintf(buffer,  "%s: %02d", "Giorno", _day);
+    }
+    // Set Month
+    if ( setModeLevel == 1 ) {
+      if ( digitalRead(PIU) == HIGH && _month < 12) { _month++; }
+      if ( digitalRead(MENO) == HIGH && _month > 1) { _month--; }
+
+      sprintf(buffer,  "%s: %02d", "Mese", _month);
+    }
+    // Set Year
+    if ( setModeLevel == 2 ) {
+      if ( digitalRead(PIU) == HIGH && _year < 9999) { _year++; }
+      if ( digitalRead(MENO) == HIGH && _year > 1900) { _year--; }
+
+      sprintf(buffer,  "%s: %02d", "Anno", _year);
+    }
+    // Set Hour
+    if ( setModeLevel == 3 ) {
+      if ( digitalRead(PIU) == HIGH && _hour < 24) { _hour++; }
+      if ( digitalRead(MENO) == HIGH && _hour > 1) { _hour--; }
+
+      sprintf(buffer,  "%s: %02d", "Ora", _hour);
+    }
+    // Set Minute
+    if ( setModeLevel == 4 ) {
+      if ( digitalRead(PIU) == HIGH && _min < 60) { _min++; }
+      if ( digitalRead(MENO) == HIGH && _min > 1) { _min--; }
+
+      sprintf(buffer,  "%s: %02d", "Minuti", _min);
+    }
+    // Set Second
+    if ( setModeLevel == 5 ) {
+      if ( digitalRead(PIU) == HIGH && _sec < 60) { _sec++; }
+      if ( digitalRead(MENO) == HIGH && _sec > 0) { _sec--; }
+
+      sprintf(buffer,  "%s: %02d", "Secondi", _sec);
+    }
+
+    lcd.print( buffer );
+    if ( digitalRead(SET) == HIGH ) { 
+      lcd.clear(); setModeLevel++;  
+    }
+    if ( setModeLevel > 5 ) { 
+      setModeLevel=0; 
+    }
+
+    if (timeSet > 0 && (setModeTime*2) < (millis() - timeSet) ) {
+       RTC.adjust(DateTime(_year, _month, _day, _hour, _min, _sec));
+       setMode = false;
+    }
+    delay(200);
+  }
+}
